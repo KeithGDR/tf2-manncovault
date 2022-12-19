@@ -5,8 +5,8 @@
 
 /*****************************/
 //Defines
-#define PLUGIN_NAME "[TF2] Collect Guns"
-#define PLUGIN_DESCRIPTION "A gamemode which allows for gun collecting with custom statistics and attributes Borderlands style."
+#define PLUGIN_NAME "[TF2] MannCo Vault"
+#define PLUGIN_DESCRIPTION "Collect custom built weapons from the MannCo Vault!"
 #define PLUGIN_VERSION "1.0.0"
 
 /*****************************/
@@ -21,8 +21,7 @@
 
 /*****************************/
 //Plugin Info
-public Plugin myinfo = 
-{
+public Plugin myinfo =  {
 	name = PLUGIN_NAME, 
 	author = "Drixevel", 
 	description = PLUGIN_DESCRIPTION, 
@@ -30,18 +29,6 @@ public Plugin myinfo =
 	url = "https://drixevel.dev/"
 };
 
-public void OnPluginStart()
-{
-	RegAdminCmd("sm_generateweapon", Command_GenerateWeapon, ADMFLAG_ROOT);
-}
+public void OnPluginStart() {
 
-public Action Command_GenerateWeapon(int client, int args)
-{
-	GenerateWeapon();
-	return Plugin_Handled;
-}
-
-void GenerateWeapon()
-{
-	
 }
