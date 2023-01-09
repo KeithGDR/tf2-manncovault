@@ -7,9 +7,11 @@
 //Defines
 #define PLUGIN_NAME "[TF2] MannCo Vault"
 #define PLUGIN_DESCRIPTION "Collect custom built weapons from the MannCo Vault!"
-#define PLUGIN_VERSION "1.0.0"
+#define PLUGIN_VERSION "1.0.1"
 
 #define DIR_PERMS 511
+
+#define MAX_MANUFACTURERS 16
 
 /*****************************/
 //Includes
@@ -51,6 +53,33 @@ enum TF2Quality {
 	TF2Quality_ToborA
 };
 
+enum Grade {
+	Any,
+	Low,
+	Medium,
+	High
+}
+
+enum struct Manufacturer {
+	char name[64];
+	Grade grade;
+
+	void Add(const char[] name, Grade grade) {
+		strcopy(this.name, sizeof(Manufacturer::name), name);
+		this.grade = grade;
+	}
+
+	void Clear() {
+		this.name[0] = '\0';
+		this.grade = Low;
+	}
+}
+
+Manufacturer g_Manufacturer[MAX_MANUFACTURERS + 1];
+int g_TotalManufacturers;
+
+JSON_Object g_WeaponData[4096 + 1];
+
 /*****************************/
 //Plugin Info
 public Plugin myinfo =  {
@@ -64,6 +93,9 @@ public Plugin myinfo =  {
 public void OnPluginStart() {
 	Database.Connect(OnSQLConnect, "default");
 
+	RegConsoleCmd("sm_vault", Command_Weapons, "View your current vaulted weapons.");
+	RegConsoleCmd("sm_weapons", Command_Weapons, "View your current vaulted weapons.");
+	RegConsoleCmd("sm_weaponinfo", Command_WeaponInfo, "Views your weapons info.");
 	RegAdminCmd("sm_mcv", Command_MCV, ADMFLAG_GENERIC, "Opens the MannCo Vault menu.");
 
 	char sPath[PLATFORM_MAX_PATH];
@@ -77,6 +109,23 @@ public void OnPluginStart() {
 	if (g_ItemSchema == null) {
 		ThrowError("[TF2] MannCo Vault: Failed to load item schema!");
 	}
+
+	// M_PoopyJoesWarehouse,			//Low Grade
+	// M_ArchMedis,						//Healing Weapons
+	// M_MonoCule,						//Rocket Launchers
+	// M_BonkInc,						//Whacky Weapons
+	// M_MerasMuitions,					//Medium Grade
+	// M_MannCoFieldsDivision,			//High Grade
+	// M_PumpkinInc,					//Melee Weapons
+	// M_MissPaulingsPersonalStache		//Rare Weapons
+	g_Manufacturer[g_TotalManufacturers++].Add("Poopy Joe's Warehouse", Low);
+	g_Manufacturer[g_TotalManufacturers++].Add("Arch Medis", Any);
+	g_Manufacturer[g_TotalManufacturers++].Add("Mono Cule", Any);
+	g_Manufacturer[g_TotalManufacturers++].Add("Bonk Inc.", Any);
+	g_Manufacturer[g_TotalManufacturers++].Add("MerasMunitions", Medium);
+	g_Manufacturer[g_TotalManufacturers++].Add("MannCo. Fields Division", Medium);
+	g_Manufacturer[g_TotalManufacturers++].Add("Pumpkin Inc.", High);
+	g_Manufacturer[g_TotalManufacturers++].Add("Miss Pauling's Personal Stache", High);
 
 	// g_ItemSchema.GotoFirstSubKey();
 	// char sName[64];
@@ -98,10 +147,6 @@ public void OnSQLConnect(Database db, const char[] error, any data) {
 
 	g_Database = db;
 	LogMessage("[TF2] MannCo Vault: Connected to database!");
-
-	if (g_Database) {
-
-	}
 }
 
 public Action Command_MCV(int client, int args) {
@@ -162,17 +207,13 @@ public int OpenGenerateEquipMenuHandler(Menu menu, MenuAction action, int param1
 
 			if (StrEqual(info, "generate_primary")) {
 				slot = TFWeaponSlot_Primary;
-				int entity = GenerateEquipWeapon(class, slot, param1);
-				PrintToChatAll("Entity: %d", entity);
 			} else if (StrEqual(info, "generate_secondary")) {
 				slot = TFWeaponSlot_Secondary;
-				int entity = GenerateEquipWeapon(class, slot, param1);
-				PrintToChatAll("Entity: %d", entity);
 			} else if (StrEqual(info, "generate_melee")) {
 				slot = TFWeaponSlot_Melee;
-				int entity = GenerateEquipWeapon(class, slot, param1);
-				PrintToChatAll("Entity: %d", entity);
 			}
+
+			GenerateEquipWeapon(class, slot, param1);
 		}
 
 		case MenuAction_Cancel: {
@@ -213,24 +254,23 @@ public int OpenGenerateDropMenuHandler(Menu menu, MenuAction action, int param1,
 			float vOrigin[3];
 			GetClientEyePosition(param1, vOrigin);
 
-			float velocity[3];
-			velocity[0] = GetRandomFloat(-100.0, 100.0);
-			velocity[1] = GetRandomFloat(-100.0, 100.0);
-			velocity[2] = GetRandomFloat(100.0, 200.0);
+			float vAngles[3];
+			GetClientEyeAngles(param1, vAngles);
+
+			// float velocity[3];
+			// velocity[0] = GetRandomFloat(-100.0, 100.0);
+			// velocity[1] = GetRandomFloat(-100.0, 100.0);
+			// velocity[2] = GetRandomFloat(100.0, 200.0);
 
 			if (StrEqual(info, "generate_primary")) {
 				slot = TFWeaponSlot_Primary;
-				int entity = GenerateDroppedWeapon(class, slot, vOrigin, velocity);
-				PrintToChatAll("Entity: %d", entity);
 			} else if (StrEqual(info, "generate_secondary")) {
 				slot = TFWeaponSlot_Secondary;
-				int entity = GenerateDroppedWeapon(class, slot, vOrigin, velocity);
-				PrintToChatAll("Entity: %d", entity);
 			} else if (StrEqual(info, "generate_melee")) {
 				slot = TFWeaponSlot_Melee;
-				int entity = GenerateDroppedWeapon(class, slot, vOrigin, velocity);
-				PrintToChatAll("Entity: %d", entity);
 			}
+
+			GenerateDroppedWeapon(class, slot, vOrigin, vAngles);
 		}
 
 		case MenuAction_Cancel: {
@@ -262,7 +302,6 @@ int GenerateEquipWeapon(TFClassType class, int slot, int client) {
 
 	char name[64];
 	weapon.GetString("name", name, sizeof(name));
-	PrintToChat(client, "Equipping Weapon: %s", name);
 
 	int index = weapon.GetInt("index");
 
@@ -271,10 +310,15 @@ int GenerateEquipWeapon(TFClassType class, int slot, int client) {
 
 	TF2_RemoveWeaponSlot(client, slot);
 
-	return TF2_GiveItem(client, classname, index);
+	int entity = TF2_GiveItem(client, classname, index);
+	g_WeaponData[entity] = weapon;
+
+	StoreWeapon(client, entity);
+
+	return entity;
 }
 
-int GenerateDroppedWeapon(TFClassType class, int slot, float origin[3], float velocity[3]) {
+int GenerateDroppedWeapon(TFClassType class, int slot, float origin[3], float angles[3]) {
 	if (class < TFClass_Scout || class > TFClass_Spy) {
 		LogError("[TF2] MannCo Vault: Invalid class type %d", class);
 		return -1;
@@ -288,7 +332,10 @@ int GenerateDroppedWeapon(TFClassType class, int slot, float origin[3], float ve
 	JSON_Object weapon = GenerateWeapon(class, slot);
 	int index = weapon.GetInt("index");
 
-	return TF2_CreateDroppedWeapon(index, origin, NULL_VECTOR, velocity);
+	int entity = TF2_CreateDroppedWeapon(origin, angles, index);
+	g_WeaponData[entity] = weapon;
+
+	return entity;
 }
 
 JSON_Object GenerateWeapon(TFClassType class, int slot) {
@@ -312,7 +359,10 @@ JSON_Object GenerateWeapon(TFClassType class, int slot) {
 	char name[64];
 	GenerateWeaponName(name, sizeof(name));
 
+	int manufacturer = GetRandomInt(0, g_TotalManufacturers - 1);
+
 	weapon.SetString("name", name);
+	weapon.SetInt("manufacturer", manufacturer);
 	weapon.SetInt("index", index);
 	weapon.SetString("classname", classname);
 
@@ -331,22 +381,23 @@ void GenerateWeaponName(char[] buffer, int size) {
 		ThrowError("[TF2] MannCo Vault: Failed to parse file: %s", sPath);
 	}
 
-	for (int i = 0; i < GetRandomInt(1, 2); i++) {
-		char name[64]; ArrayList words = new ArrayList(64);
-		while (!file.EndOfFile() && file.ReadLine(name, sizeof(name))) {
-			if (strlen(name) == 0) {
-				continue;
-			}
+	ArrayList words = new ArrayList(ByteCountToCells(64));
+	char name[64];
 
-			words.PushString(name);
+	while (!file.EndOfFile() && file.ReadLine(name, sizeof(name))) {
+		if (strlen(name) == 0) {
+			continue;
 		}
 
-		words.GetString(GetRandomInt(0, words.Length - 1), name, sizeof(name));
-		delete words;
+		words.PushString(name);
+	}
 
+	for (int i = 0; i < GetRandomInt(1, 2); i++) {
+		words.GetString(GetRandomInt(0, words.Length - 1), name, sizeof(name));
 		Format(buffer, size, "%s %s", buffer, name);
 	}
 
+	delete words;
 	file.Close();
 }
 
@@ -394,27 +445,114 @@ int GetRandomIndex(TFClassType class, int slot) {
 	return random;
 }
 
-int TF2_CreateDroppedWeapon(int index, float origin[3], float angle[3] = NULL_VECTOR, float velocity[3] = NULL_VECTOR, const char[] model = "") {
+int TF2_CreateDroppedWeapon(float origin[3], float angles[3] = NULL_VECTOR, int index) {
 	int entity = CreateEntityByName("tf_dropped_weapon");
-	
+
 	if (!IsValidEntity(entity)) {
-		return entity;
+		LogError("[TF2] Failed to create dropped weapon entity");
+		return -1;
 	}
-	
+
+	char model[PLATFORM_MAX_PATH];
+	GetModelFromIndex(index, model, sizeof(model));
+
+	DispatchKeyValueVector(entity, "origin", origin);
+	DispatchKeyValueVector(entity, "angles", angles);
+	DispatchKeyValue(entity, "model", model);
+	DispatchSpawn(entity);
+
 	SetEntProp(entity, Prop_Send, "m_iItemDefinitionIndex", index);
 	SetEntProp(entity, Prop_Send, "m_bInitialized", 1);
-	SetEntProp(entity, Prop_Send, "m_iItemIDLow", -1);
-	SetEntProp(entity, Prop_Send, "m_iItemIDHigh", -1);
-	
-	if (strlen(model) > 0) {
-		SetEntityModel(entity, model);
+	SetEntProp(entity, Prop_Send, "m_iEntityLevel", 1);
+	SetEntProp(entity, Prop_Send, "m_iEntityQuality", 6);
+	SetEntProp(entity, Prop_Send, "m_iItemIDLow", 2048);
+	SetEntProp(entity, Prop_Send, "m_iItemIDHigh", 0);
+
+	return entity;
+}
+
+void GetModelFromIndex(int index, char[] buffer, int size) {
+	char sIndex[16];
+	IntToString(index, sIndex, sizeof(sIndex));
+
+	g_ItemSchema.Rewind();
+	g_ItemSchema.JumpToKey("items");
+	g_ItemSchema.JumpToKey(sIndex);
+	g_ItemSchema.GetString("model_player", buffer, size);
+
+	if (strlen(buffer) == 0) {
+		char sPrefab[64];
+		g_ItemSchema.GetString("prefab", sPrefab, sizeof(sPrefab));
+		g_ItemSchema.Rewind();
+		g_ItemSchema.JumpToKey("prefabs");
+		g_ItemSchema.JumpToKey(sPrefab);
+		g_ItemSchema.GetString("model_player", buffer, size);
+	}
+}
+
+stock TF2Quality GetQualityFromIndex(int index) {
+	char sIndex[16]; char quality[64];
+	IntToString(index, sIndex, sizeof(sIndex));
+
+	g_ItemSchema.Rewind();
+	g_ItemSchema.JumpToKey("items");
+	g_ItemSchema.JumpToKey(sIndex);
+	g_ItemSchema.GetString("item_quality", quality, sizeof(quality));
+
+	if (strlen(quality) == 0) {
+		char sPrefab[64];
+		g_ItemSchema.GetString("prefab", sPrefab, sizeof(sPrefab));
+		g_ItemSchema.Rewind();
+		g_ItemSchema.JumpToKey("prefabs");
+		g_ItemSchema.JumpToKey(sPrefab);
+		g_ItemSchema.GetString("item_quality", quality, sizeof(quality));
+	}
+
+	if (strlen(quality) == 0) {
+		return TF2Quality_Normal;
+	}
+
+	return TF2_GetQualityFromName(quality);
+}
+
+TF2Quality TF2_GetQualityFromName(const char[] name) {
+	if (StrEqual(name, "normal", false)) {
+		return TF2Quality_Normal;
+	} else if (StrEqual(name, "rarity1", false)) {
+		return TF2Quality_Rarity1;
+	} else if (StrEqual(name, "genuine", false)) {
+		return TF2Quality_Genuine;
+	} else if (StrEqual(name, "rarity2", false)) {
+		return TF2Quality_Rarity2;
+	} else if (StrEqual(name, "vintage", false)) {
+		return TF2Quality_Vintage;
+	} else if (StrEqual(name, "rarity3", false)) {
+		return TF2Quality_Rarity3;
+	} else if (StrEqual(name, "rarity4", false)) {
+		return TF2Quality_Rarity4;
+	} else if (StrEqual(name, "unusual", false)) {
+		return TF2Quality_Unusual;
+	} else if (StrEqual(name, "unique", false)) {
+		return TF2Quality_Unique;
+	} else if (StrEqual(name, "community", false)) {
+		return TF2Quality_Community;
+	} else if (StrEqual(name, "developer", false)) {
+		return TF2Quality_Developer;
+	} else if (StrEqual(name, "selfmade", false)) {
+		return TF2Quality_Selfmade;
+	} else if (StrEqual(name, "customized", false)) {
+		return TF2Quality_Customized;
+	} else if (StrEqual(name, "strange", false)) {
+		return TF2Quality_Strange;
+	} else if (StrEqual(name, "completed", false)) {
+		return TF2Quality_Completed;
+	} else if (StrEqual(name, "haunted", false)) {
+		return TF2Quality_Haunted;
+	} else if (StrEqual(name, "tobora", false)) {
+		return TF2Quality_ToborA;
 	}
 	
-	DispatchSpawn(entity);
-	ActivateEntity(entity);
-	TeleportEntity(entity, origin, angle, velocity);
-	
-	return entity;
+	return TF2Quality_Normal;
 }
 
 KeyValues GetItemSchema() {
@@ -553,4 +691,161 @@ stock int TF2_GiveItem(int client, char[] classname, int index, TF2Quality quali
 	}
 	
 	return weapon;
+}
+
+public Action Command_Weapons(int client, int args) {
+	if (client < 1) {
+		return Plugin_Handled;
+	}
+
+	OpenWeaponsMenu(client);
+
+	return Plugin_Handled;
+}
+
+void OpenWeaponsMenu(int client) {
+	char sSteamID[64];
+	if (!GetClientAuthId(client, AuthId_Steam2, sSteamID, sizeof(sSteamID))) {
+		return;
+	}
+
+	char sQuery[1024];
+	g_Database.Format(sQuery, sizeof(sQuery), "SELECT id, data FROM `mcv_weapons` WHERE steamid = '%s';", sSteamID);
+	g_Database.Query(OnViewVault, sQuery, GetClientUserId(client), DBPrio_Low);
+}
+
+public void OnViewVault(Database db, DBResultSet results, const char[] error, any data) {
+	int client;
+	if ((client = GetClientOfUserId(data)) < 1) {
+		return;
+	}
+
+	if (results == null) {
+		ThrowError("Error while opening player vault: %s", error);
+	}
+
+	Menu menu = new Menu(MenuHandler_Weapons);
+	menu.SetTitle("Vaulted Weapons");
+
+	int id; char sID[16]; char sData[5192]; JSON_Object obj; char sDisplay[64]; char name[64];
+	while (results.FetchRow()) {
+		id = results.FetchInt(0);
+		results.FetchString(1, sData, sizeof(sData));
+
+		obj = json_decode(sData);
+
+		if (obj == null) {
+			continue;
+		}
+
+		obj.GetString("name", name, sizeof(name));
+
+		IntToString(id, sID, sizeof(sID));
+		FormatEx(sDisplay, sizeof(sDisplay), "%s", name);
+		menu.AddItem(sID, sDisplay);
+
+		json_cleanup_and_delete(obj);
+	}
+
+	menu.Display(client, MENU_TIME_FOREVER);
+}
+
+public int MenuHandler_Weapons(Menu menu, MenuAction action, int param1, int param2) {
+	switch (action) {
+		case MenuAction_Select: {
+			
+		}
+		
+		case MenuAction_End: {
+			delete menu;
+		}
+	}
+	
+	return 0;
+}
+
+public Action Command_WeaponInfo(int client, int args) {
+	if (client < 1) {
+		return Plugin_Handled;
+	}
+
+	int target = GetClientAimTarget(client, false);
+
+	if (IsValidEntity(target)) {
+		OpenWeaponInfoPanel(client, target);
+		return Plugin_Handled;
+	}
+
+	int active = GetEntPropEnt(client, Prop_Send, "m_hActiveWeapon");
+	OpenWeaponInfoPanel(client, active);
+
+	return Plugin_Handled;
+}
+
+void OpenWeaponInfoPanel(int client, int weapon) {
+	if (!IsValidEntity(weapon)) {
+		return;
+	}
+
+	if (g_WeaponData[weapon] == null) {
+		return;
+	}
+
+	Panel panel = new Panel();
+
+	panel.SetTitle("Weapon Info");
+
+	char sText[128];
+
+	char sName[64];
+	g_WeaponData[weapon].GetString("name", sName, sizeof(sName));
+
+	FormatEx(sText, sizeof(sText), "Name: %s", sName);
+	panel.DrawText(sText);
+
+	int manufacturer = g_WeaponData[weapon].GetInt("manufacturer");
+
+	FormatEx(sText, sizeof(sText), "Manufacturer: %s", g_Manufacturer[manufacturer].name);
+	panel.DrawText(sText);
+
+	panel.DrawItem("Exit");
+
+	panel.Send(client, OnWeaponInfoPanel, MENU_TIME_FOREVER);
+	delete panel;
+}
+
+public int OnWeaponInfoPanel(Menu menu, MenuAction action, int param1, int param2) {
+	
+}
+
+void StoreWeapon(int client, int weapon) {
+	if (g_WeaponData[weapon] == null) {
+		return;
+	}
+
+	char sSteamID[64];
+	if (!GetClientAuthId(client, AuthId_Steam2, sSteamID, sizeof(sSteamID))) {
+		return;
+	}
+
+	char sData[5192];
+	g_WeaponData[weapon].Encode(sData, sizeof(sData));
+
+	char sQuery[1024];
+	g_Database.Format(sQuery, sizeof(sQuery), "INSERT INTO `mcv_weapons` (steamid, data) VALUES ('%s', '%s');", sSteamID, sData);
+	g_Database.Query(OnStoreWeapon, sQuery, _, DBPrio_Low);
+}
+
+public void OnStoreWeapon(Database db, DBResultSet results, const char[] error, any data) {
+	if (results == null) {
+		ThrowError("Error while storing player weapon: %s", error);
+	}
+}
+
+public void OnEntityDestroyed(int entity) {
+	if (entity > MaxClients) {
+		if (g_WeaponData[entity] != null) {
+			json_cleanup_and_delete(g_WeaponData[entity]);
+		}
+	}
 }
